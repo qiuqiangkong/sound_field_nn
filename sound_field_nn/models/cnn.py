@@ -6,11 +6,6 @@ from einops import rearrange
 import numpy as np
 from dataclasses import dataclass
 
-# @dataclass
-# class UNetConfig:
-#     n_fft: int = 2048
-#     hop_length: int = 480
-
 
 class Cnn(nn.Module):
     def __init__(self, config):
@@ -26,10 +21,10 @@ class Cnn(nn.Module):
         """Separation model.
 
         Args:
-            x: (b, t, w, h)
+            x: (b, t, x, y)
 
         Outputs:
-            output: (batch_size, channels_num, samples_num)
+            output: (b, t, x, y)
         """
 
         B = x.shape[0]
