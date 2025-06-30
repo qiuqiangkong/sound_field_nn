@@ -1,4 +1,4 @@
-# Sound filed prediction with neural network
+# Sound Field Prediction with Neural Networks
 
 This repo aims to predict a sound field at an arbitrary time stamp from the initial boundary conditions of a room and the source positions.
 
