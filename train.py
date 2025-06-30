@@ -3,21 +3,18 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-import random
-import librosa
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import torch.optim as optim
-from torch.utils.data import DataLoader, Dataset
-from tqdm import tqdm
-from einops import rearrange
-import museval
-
 import wandb
-from sound_field_prediction.data.samplers import InfiniteSampler
-from sound_field_prediction.utils import LinearWarmUp, parse_yaml
+from torch.utils.data import DataLoader, Dataset
+from torch.utils.data._utils.collate import default_collate
+from tqdm import tqdm
+
+from sound_field_nn.losses import l1_loss
+from sound_field_nn.samplers.infinite_sampler import InfiniteSampler
+from sound_field_nn.utils import LinearWarmUp, parse_yaml
 
 
 def train(args) -> None:
@@ -32,8 +29,7 @@ def train(args) -> None:
     device = configs["train"]["device"]
 
     # Checkpoints directory
-    config_name = Path(config_path).stem
-    ckpts_dir = Path("./checkpoints", filename, config_name)
+    ckpts_dir = Path("./checkpoints", filename, Path(config_path).stem)
     Path(ckpts_dir).mkdir(parents=True, exist_ok=True)
 
     # Datasets
@@ -52,12 +48,13 @@ def train(args) -> None:
         pin_memory=True
     )
 
-    # LLM decoder
+    # Model
     model = get_model(
         configs=configs, 
         ckpt_path=configs["train"]["resume_ckpt_path"]
     ).to(device)
 
+    # Loss function
     loss_fn = get_loss_fn(configs)
 
     # Optimizer
@@ -68,46 +65,45 @@ def train(args) -> None:
 
     # Logger
     if wandb_log:
-        wandb.init(project="music_source_separation", name="{}".format(config_name))
+        wandb.init(project="sound_field_nn", name=Path(config_path).stem)
 
     # Train
     for step, data in enumerate(tqdm(train_dataloader)):
-
-        input_x = data['x'][:, 0 : -1, :, :].to(device)  # (b, t, w, h)
-        target = data["x"][:, 1:, :, :].to(device)  # (b, t, w, h)
+        
+        # ------ 1. Data preparation ------
+        # Input
+        curr_u = data["curr_u"][:, None, :, :].to(device)
+        bnd = data["bnd"][:, None, :, :].to(device)
+        x = torch.cat((curr_u, bnd), dim=1)  # (b, c, h, w)
+        
+        # Target
+        target = data["next_u"][:, None, :, :].to(device)  # (b, c, h, w)
 
         # ------ 2. Training ------
         # 2.1 Forward
         model.train()
-        output = model(input_x)
+        output = model(x)
 
-        # 2.3 Loss
+        # 2.2 Loss
         loss = loss_fn(output=output, target=target)
         
-        # 2.4 Optimize
+        # 2.3 Optimize
         optimizer.zero_grad()  # Reset all parameter.grad to 0
         loss.backward()  # Update all parameter.grad
         optimizer.step()  # Update all parameters based on all parameter.grad
 
-        # 2.5 Learning rate scheduler
+        # 2.4 Learning rate scheduler
         if scheduler:
             scheduler.step()
 
         if step % 100 == 0:
             print(loss)
-        
-        '''
+
         # ------ 3. Evaluation ------
         # 3.1 Evaluate
         if step % configs["train"]["test_every_n_steps"] == 0:
 
-            train_sdr = validate(
-                configs=configs,
-                dataset=train_dataset, 
-                model=model
-            )
-
-            test_sdr = validate(
+            test_loss = validate(
                 configs=configs,
                 dataset=test_dataset, 
                 model=model
@@ -115,12 +111,11 @@ def train(args) -> None:
 
             if wandb_log:
                 wandb.log(
-                    data={"train_SDR": train_sdr, "test_SDR": test_sdr},
+                    data={"test_loss": test_loss},
                     step=step
                 )
 
-            print("Train SDR: {}".format(train_sdr))
-            print("Test SR: {}".format(test_sdr))
+            print("Test loss: {:.4f}".format(test_loss))
         
         # 3.2 Save model
         if step % configs["train"]["save_every_n_steps"] == 0:
@@ -131,8 +126,6 @@ def train(args) -> None:
 
         if step == configs["train"]["training_steps"]:
             break
-        '''
-        
         
         
 def get_dataset(
@@ -141,98 +134,29 @@ def get_dataset(
 ) -> Dataset:
     r"""Get datasets."""
 
-    # from audidata.io.crops import RandomCrop, StartCrop
-    # from audidata.transforms import Mono, TextNormalization, TimeShift
-
-    sr = configs["sample_rate"]
-    clip_duration = configs["clip_duration"]
-    target_stem = configs["target_stem"]
-    datasets_split = "{}_datasets".format(split)
-
-    datasets = []
+    ds = f"{split}_datasets"
+    for name in configs[ds].keys():
     
-    for name in configs[datasets_split].keys():
-    
-        if name == "MUSDB18HQ":
-
-            # from audidata.datasets import MUSDB18HQ
-
-            # dataset = MUSDB18HQ(
-            #     root=configs[datasets_split][name]["root"],
-            #     split=configs[datasets_split][name]["split"],
-            #     sr=sr,
-            #     crop=RandomCrop(clip_duration=clip_duration, end_pad=0.),
-            #     target_stems=[target_stem],
-            #     time_align="group",
-            #     mixture_transform=None,
-            #     group_transform=None,
-            #     stem_transform=None
-            # )
-            # datasets.append(dataset)
-
-            dataset = PAWS()
+        if name == "FDTD2D":
+            from sound_field_nn.datasets.fdtd_2d import FDTD2D_Slice
+            dataset = FDTD2D_Slice(configs[ds][name]["skip"])
             return dataset
 
         else:
             raise ValueError(name)
 
 
-def get_pressure(path):
-    loaded = np.load(path,allow_pickle=True)
-    loaded_dict = loaded.item()
-
-    data = loaded_dict["p"]
-    data = data.reshape(-1,128,128).transpose(0,2,1)
-    return data
-
-    
-class PAWS(Dataset):
-    def __init__(self):
-        pass
-
-    def __getitem__(self, index):
-
-        x = get_pressure("/public/acoustic_field_data/training_set/complicated_room1_save1.npy")
-
-        T, W, H = x.shape
-
-        length = 10
-
-        start_sample = random.randint(0, T - 10)
-
-        data = {"x": x[start_sample : start_sample + length]}
-
-        return data
-
-    def __len__(self):
-        return 1
-
-
-
 def get_model(
     configs: dict, 
     ckpt_path: str
 ) -> nn.Module:
-    r"""Initialize LLM decoder."""
-
+    r"""Initialize model."""
+    
     name = configs["model"]["name"]
 
     if name == "Cnn":
-
-        from sound_field_prediction.models.cnn import Cnn
-
-        return Cnn(config=None)
-
-    elif name == "UNet":
-
-        from sound_field_prediction.models.unet import UNet, UNetConfig
-
-        config = UNetConfig(
-            n_fft=configs["model"]["n_fft"],
-            hop_length=configs["model"]["hop_length"],
-        )
-
-        model = UNet(config)
+        from sound_field_nn.models.cnn import Cnn
+        model = Cnn()
 
     else:
         raise ValueError(name)    
@@ -240,16 +164,16 @@ def get_model(
     if ckpt_path:
         ckpt = torch.load(ckpt_path)
         model.load_state_dict(ckpt)
-
+    
     return model
 
 
-def get_loss_fn(configs):
+def get_loss_fn(configs: dict) -> callable:
 
     loss_type = configs["train"]["loss"]
 
     if loss_type == "l1":
-        from sound_field_prediction.losses import l1_loss
+        from sound_field_nn.losses import l1_loss
         return l1_loss
 
     else:
@@ -282,121 +206,38 @@ def validate(
     configs: dict,
     dataset: Dataset,
     model: nn.Module,
-    # valid_songs=10
-    valid_songs = 10
 ) -> float:
     r"""Validate the model on part of data."""
 
     device = next(model.parameters()).device
     losses = []
+    valid_num = 20
 
-    clip_duration = configs["clip_duration"]
-    sr = configs["sample_rate"]
-    clip_samples = round(clip_duration * sr)
-    batch_size = configs["train"]["batch_size_per_device"]
-    target_stem = configs["target_stem"]
+    for idx in range(valid_num):
 
-    skip_n = max(1, len(dataset) // valid_songs)
+        # ------ 1. Data preparation ------
+        data = dataset[idx]
+        data = default_collate([data])
 
-    all_sdrs = []
+        # Input
+        curr_u = data["curr_u"][:, None, :, :].to(device)
+        bnd = data["bnd"][:, None, :, :].to(device)
+        x = torch.cat((curr_u, bnd), dim=1)  # (b, c, h, w)
 
-    for idx in range(0, len(dataset), skip_n):
-        print("{}/{}".format(idx, len(dataset)))
-
-        data = {}
-        stems = ["vocals", "bass", "drums", "other"]
-
-        for stem in stems:
-            audio_path = dataset[idx]["{}_audio_path".format(stem)]
-            audio, _ = librosa.load(
-                audio_path,
-                sr=configs["sample_rate"],
-                mono=False
-            )
-            data[stem] = audio
-
-        data["mixture"] = np.sum([data[stem] for stem in stems], axis=0)
-
-        output = separate(
-            model=model, 
-            audio=data["mixture"], 
-            clip_samples=clip_samples,
-            batch_size=batch_size
-        )
-        target = data[target_stem]
-
-        museval_sr = 44100
-        output = librosa.resample(y=output, orig_sr=sr, target_sr=museval_sr)
-        target = librosa.resample(y=target, orig_sr=sr, target_sr=museval_sr)
-
-        # Calculate SDR. Shape should be (sources_num, channels_num, audio_samples)
-        (sdrs, _, _, _) = museval.evaluate([target.T], [output.T])
-
-        sdr = np.nanmedian(sdrs)
-        all_sdrs.append(sdr)
-
-    return np.nanmedian(all_sdrs)
-
-
-def separate(
-    model: nn.Module, 
-    audio: np.ndarray, 
-    clip_samples: int, 
-    batch_size: int
-) -> np.ndarray:
-    r"""Separate a long audio.
-    """
-
-    device = next(model.parameters()).device
-
-    audio_samples = audio.shape[1]
-    padded_audio_samples = round(np.ceil(audio_samples / clip_samples) * clip_samples)
-    audio = librosa.util.fix_length(data=audio, size=padded_audio_samples, axis=-1)
-
-    clips = librosa.util.frame(
-        audio, 
-        frame_length=clip_samples, 
-        hop_length=clip_samples
-    )
-    # shape: (c, t, clips_num)
-
-    # clips = torch.Tensor(clips).to(device)
-
-    # clips = rearrange(clips, 'c t n -> n c t')
-    
-    clips = clips.transpose(2, 0, 1)#.contiguous()
-    # shape: (clips_num, c, t)
-
-    clips = torch.Tensor(clips.copy()).to(device)
-
-    clips_num = clips.shape[0]
-
-    pointer = 0
-    outputs = []
-
-    while pointer < clips_num:
-
-        batch_clips = torch.Tensor(clips[pointer : pointer + batch_size])
-
+        # Target
+        target = data["next_u"][:, None, :, :].to(device)  # (b, c, h, w)
+        
+        # ------ 2. Evaluation ------
+        # 2.1 Forward
         with torch.no_grad():
             model.eval()
-            batch_output = model(mixture=batch_clips)
-            batch_output = batch_output.cpu().numpy()
+            output = model(x)
 
-        outputs.append(batch_output)
-        pointer += batch_size
+        # 2.2 Loss
+        loss = l1_loss(output=output, target=target)
+        losses.append(loss.item())
 
-    outputs = np.concatenate(outputs, axis=0)
-    # shape: (clips_num, channels_num, clip_samples)
-
-    channels_num = outputs.shape[1]
-    outputs = outputs.transpose(1, 0, 2).reshape(channels_num, -1)
-    # shape: (channels_num, clips_num * clip_samples)
-
-    outputs = outputs[:, 0 : audio_samples]
-    # shape: (channels_num, audio_samples)
-
-    return outputs
+    return np.mean(losses)
 
 
 if __name__ == "__main__":

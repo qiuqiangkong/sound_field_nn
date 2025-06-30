@@ -1,5 +1,6 @@
 import torch
+from torch import Tensor
 
 
-def l1_loss(output, target):
-	return torch.mean(torch.abs(output - target))
+def l1_loss(output: Tensor, target: Tensor) -> torch.float:
+	return (output - target).abs().mean()

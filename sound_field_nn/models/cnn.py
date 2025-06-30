@@ -1,71 +1,62 @@
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torchaudio
-from einops import rearrange
-import numpy as np
-from dataclasses import dataclass
+from torch import Tensor
 
 
 class Cnn(nn.Module):
-    def __init__(self, config):
+    def __init__(self) -> None:
         super().__init__()
         
-        self.pre_conv = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=5, padding=2)
-        self.conv_block1 = ConvBlock(in_channels=32, out_channels=32, kernel_size=(5, 5))
-        self.conv_block2 = ConvBlock(in_channels=32, out_channels=32, kernel_size=(5, 5))
-        self.conv_block3 = ConvBlock(in_channels=32, out_channels=32, kernel_size=(5, 5))
-        self.post_conv = nn.Conv2d(in_channels=32, out_channels=1, kernel_size=5, padding=2)
+        self.pre_layer = nn.Conv2d(in_channels=2, out_channels=32, kernel_size=5, padding=2)
+        self.conv1 = ConvBlock(in_channels=32, out_channels=32, kernel_size=5)
+        self.conv2 = ConvBlock(in_channels=32, out_channels=32, kernel_size=5)
+        self.conv3 = ConvBlock(in_channels=32, out_channels=32, kernel_size=5)
+        self.post_layer = nn.Conv2d(in_channels=32, out_channels=1, kernel_size=5, padding=2)
         
-    def forward(self, x):
-        """Separation model.
+    def forward(self, x: Tensor) -> Tensor:
+        """Model.
+
+        b: batch_size
+        c: channels_num
+        h: height
+        w: weight
 
         Args:
-            x: (b, t, x, y)
+            x: (b, c, h, w)
 
         Outputs:
-            output: (b, t, x, y)
+            output: (b, c, h, w)
         """
 
-        B = x.shape[0]
-
-        x = rearrange(x, 'b t w h -> (b t) 1 w h')  # shape: (b*t, w, h)
-        x = self.pre_conv(x)
-        x = self.conv_block1(x)
-        x = self.conv_block2(x)
-        x = self.conv_block3(x)
-        x = self.post_conv(x)
-        x = rearrange(x, '(b t) 1 w h -> b t w h', b=B)  # shape: (b, t, w, h)
+        x = self.pre_layer(x)  # (b, c, h, w)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x)
+        x = self.post_layer(x)  # (b, c, h, w)
 
         return x
-
 
 
 class ConvBlock(nn.Module):
-    def __init__(
-        self, in_channels, out_channels, kernel_size):
-        r"""Residual block."""
+    def __init__(self, in_channels, out_channels, kernel_size):
+        r"""Conv block"""
         super(ConvBlock, self).__init__()
 
-        padding = [kernel_size[0] // 2, kernel_size[1] // 2]
-
         self.bn = nn.BatchNorm2d(in_channels)
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, padding=kernel_size // 2, bias=False)
 
-        self.conv = nn.Conv2d(
-            in_channels=in_channels,
-            out_channels=out_channels,
-            kernel_size=kernel_size,
-            padding=padding,
-            bias=False,
-        )
-
-    def forward(self, x):
+    def forward(self, x: Tensor) -> Tensor:
         """
+        b: batch_size
+        c: channels_num
+        h: height
+        w: weight
+
         Args:
-            x: (batch_size, in_channels, time_steps, freq_bins)
+            x: (b, c, h, w)
 
         Returns:
-            output: (batch_size, out_channels, time_steps, freq_bins)
+            output: (b, c, h, w)
         """
-        x = self.conv(F.leaky_relu_(self.bn(x)))
-        return x
+        out = self.conv(F.leaky_relu_(self.bn(x)))
+        return out

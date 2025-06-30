@@ -5,13 +5,13 @@
 ```bash
 # Clone the repo
 git clone https://github.com/qiuqiangkong/sound_field_nn
-cd sfnn
+cd sound_field_nn
 
 # Install Python environment
-conda create --name sfnn python=3.10
+conda create --name sound_field_nn python=3.10
 
 # Activate environment
-conda activate sfnn
+conda activate sound_field_nn
 
 # Install Python packages dependencies
 bash env.sh
