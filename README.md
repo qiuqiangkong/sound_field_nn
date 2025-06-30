@@ -2,7 +2,7 @@
 
 This repo aims to predict a sound field at an arbitrary time stamp from the initial boundary conditions of a room and the source positions.
 
-<img src="https://github.com/user-attachments/assets/31255b97-9538-487a-89cb-0e88f57af06c" width="600">
+<img src="https://github.com/user-attachments/assets/31255b97-9538-487a-89cb-0e88f57af06c" width="800">
 
 ## 0. Install dependencies
 
@@ -35,4 +35,4 @@ CUDA_VISIBLE_DEVICES=0 python inference.py \
 ```
 
 ## Results
-<img src="https://github.com/user-attachments/assets/215fcc7f-5a77-4f2b-b63b-d00fb699706b" width="600">
+<img src="https://github.com/user-attachments/assets/215fcc7f-5a77-4f2b-b63b-d00fb699706b" width="800">
