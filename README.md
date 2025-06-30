@@ -17,16 +17,17 @@ conda activate sound_field_nn
 bash env.sh
 ```
 
-## Step 1: FDTD simulator
-
-Run the following script will demonstrate 2D sound field simulator.
-
+## 1. Train
 ```python
-python sound_field_nn/data/fdtd2d.py
+CUDA_VISIBLE_DEVICES=0 python train.py --config="./configs/cnn.yaml" --no_log
 ```
 
-## Step 2: NN prediction
-
+## 2. Inference
 ```python
-CUDA_VISIBLE_DEVICES=0 python train3.py --config="./kqq_configs/03a.yaml" --no_log
+CUDA_VISIBLE_DEVICES=0 python inference.py \
+	--config="./configs/cnn.yaml" \
+	--ckpt_path="./checkpoints/train/cnn/step=10000.pth"
+
 ```
+
+## Results
