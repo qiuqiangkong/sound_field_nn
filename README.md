@@ -1,5 +1,7 @@
 # Sound filed prediction with neural network
 
+This repo aims to predict a sound field at an arbitrary time stamp from the initial boundary conditions of a room and the source positions.
+
 ## 0. Install dependencies
 
 ```bash
