@@ -33,3 +33,4 @@ CUDA_VISIBLE_DEVICES=0 python inference.py \
 ```
 
 ## Results
+![pred](https://github.com/user-attachments/assets/215fcc7f-5a77-4f2b-b63b-d00fb699706b)
