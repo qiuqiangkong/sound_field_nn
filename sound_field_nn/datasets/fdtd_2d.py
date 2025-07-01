@@ -48,13 +48,11 @@ class FDTD2D:
     def __init__(
         self, 
         duration: float = 0.1, 
-        skip: int = 10,
         verbose: bool = False
     ):
         r"""FDTD wave simulator."""
 
         self.duration = duration
-        self.skip = skip
         self.verbose = verbose
         
         self.dx = 0.1  # Should be smaller than λ
